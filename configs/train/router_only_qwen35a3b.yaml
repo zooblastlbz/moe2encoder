@@ -8,10 +8,8 @@ model:
   use_cache: false
   max_length: 256
   router_name_patterns:
-    - router
-    - moe_gate
-    - expert_gate
-    - gate
+    - shared_expert_gate
+    - mlp.gate.weight
 
 data:
   train_jsonl: data/processed/train_pairs.jsonl

@@ -18,7 +18,7 @@ class ModelConfig:
     use_cache: bool = False
     max_length: int = 256
     router_name_patterns: List[str] = field(
-        default_factory=lambda: ["router", "moe_gate", "expert_gate", "gate"]
+        default_factory=lambda: ["shared_expert_gate", "mlp.gate.weight"]
     )
 
 
