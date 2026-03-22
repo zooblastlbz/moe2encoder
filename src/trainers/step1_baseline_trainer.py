@@ -68,7 +68,9 @@ class Step1BaselineTrainer:
         )
 
         tracker = RouterStatsTracker(encoder.model, config.model.router_name_patterns)
-        tracker.register()
+        hooked_modules = tracker.register()
+        if is_main_process():
+            print(f"[Step1] Router hooks registered: {hooked_modules}")
         result = evaluate_text_encoder(
             model=encoder,
             dataloader=loader,

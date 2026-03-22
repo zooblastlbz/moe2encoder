@@ -397,7 +397,11 @@ class RouterContrastiveTrainer:
                 accelerator.unwrap_model(train_module).encoder.model,
                 config.model.router_name_patterns,
             )
-            tracker.register()
+            hooked_modules = tracker.register()
+            if accelerator.is_main_process:
+                accelerator.print(
+                    f"[Step2-ACC] Post-eval router hooks registered: {hooked_modules}"
+                )
             result = evaluate_text_encoder(
                 model=train_module,
                 dataloader=eval_loader,

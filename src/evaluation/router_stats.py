@@ -19,14 +19,37 @@ def _to_logits(output) -> Optional[torch.Tensor]:
     if isinstance(output, torch.Tensor):
         return output
     if isinstance(output, (tuple, list)):
+        float_tensors = []
+        any_tensors = []
         for item in output:
             if isinstance(item, torch.Tensor):
-                return item
+                any_tensors.append(item)
+                if item.is_floating_point():
+                    float_tensors.append(item)
+        if float_tensors:
+            return float_tensors[0]
+        if any_tensors:
+            return any_tensors[0]
     if isinstance(output, dict):
         for key in ("router_logits", "gate_logits", "logits", "scores"):
             value = output.get(key)
             if isinstance(value, torch.Tensor):
                 return value
+        float_tensors = []
+        any_tensors = []
+        for value in output.values():
+            if isinstance(value, torch.Tensor):
+                any_tensors.append(value)
+                if value.is_floating_point():
+                    float_tensors.append(value)
+        if float_tensors:
+            return float_tensors[0]
+        if any_tensors:
+            return any_tensors[0]
+    for key in ("router_logits", "gate_logits", "logits", "scores"):
+        value = getattr(output, key, None)
+        if isinstance(value, torch.Tensor):
+            return value
     return None
 
 
@@ -120,8 +143,18 @@ class RouterStatsTracker:
 
     def _match(self, module_name: str, module_obj: nn.Module) -> bool:
         lname = module_name.lower()
-        if any(p.lower() in lname for p in self.name_patterns):
-            return True
+        for p in self.name_patterns:
+            lp = p.lower()
+            # Config patterns are often parameter-level names (e.g. "mlp.gate.weight"),
+            # while hooks are registered on module names (e.g. "mlp.gate").
+            if lp in lname:
+                return True
+            if lp.endswith(".weight") and lp[:-7] in lname:
+                return True
+            if lp.endswith(".bias") and lp[:-5] in lname:
+                return True
+            if lp in f"{lname}.weight" or lp in f"{lname}.bias":
+                return True
         cls_name = module_obj.__class__.__name__.lower()
         return any(p.lower() in cls_name for p in self.name_patterns)
 
