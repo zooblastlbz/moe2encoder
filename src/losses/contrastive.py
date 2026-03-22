@@ -79,8 +79,12 @@ def symmetric_info_nce_loss(
     cross_device_negatives: bool = True,
     feature_queue: Optional[FeatureQueue] = None,
 ) -> torch.Tensor:
-    anchor_embeddings = F.normalize(anchor_embeddings, dim=-1)
-    positive_embeddings = F.normalize(positive_embeddings, dim=-1)
+    # Keep contrastive math in a unified compute dtype to avoid mixed-precision
+    # matmul/cat runtime errors across bf16/fp16/fp32 branches.
+    compute_dtype = torch.float32
+    anchor_embeddings = F.normalize(anchor_embeddings.to(dtype=compute_dtype), dim=-1)
+    positive_embeddings = F.normalize(positive_embeddings.to(dtype=compute_dtype), dim=-1)
+    logit_scale = logit_scale.to(dtype=compute_dtype)
 
     if cross_device_negatives and is_dist_available():
         all_anchor = gather_with_grad(anchor_embeddings)
@@ -99,7 +103,11 @@ def symmetric_info_nce_loss(
     if feature_queue is not None:
         queued = feature_queue.get()
         if queued is not None and queued.numel() > 0:
-            queued = F.normalize(queued.to(anchor_embeddings.device), dim=-1)
+            # Queue is stored in fp32; align device/dtype before matmul.
+            queued = F.normalize(
+                queued.to(device=anchor_embeddings.device, dtype=compute_dtype),
+                dim=-1,
+            )
             logits_a = torch.cat([logits_a, logit_scale * (anchor_embeddings @ queued.T)], dim=1)
             logits_p = torch.cat([logits_p, logit_scale * (positive_embeddings @ queued.T)], dim=1)
 
