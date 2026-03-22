@@ -1,9 +1,9 @@
 model:
-  model_name_or_path: Qwen/Qwen3.5-35B-A3B
-  tokenizer_name_or_path: null
+  model_name_or_path: /ytech_m2v5_hdd/workspace/kling_mm/Models/Qwen3.5-35B-A3B
+  tokenizer_name_or_path: /ytech_m2v5_hdd/workspace/kling_mm/Models/Qwen3.5-35B-A3B
   trust_remote_code: true
   torch_dtype: bfloat16
-  attn_implementation: flash_attention_2
+  attn_implementation: sdpa
   gradient_checkpointing: true
   use_cache: false
   max_length: 256
@@ -12,22 +12,22 @@ model:
     - mlp.gate.weight
 
 data:
-  train_jsonl: data/processed/train_pairs.jsonl
-  eval_jsonl: data/processed/eval_pairs.jsonl
+  train_jsonl: data/processed_adapter_data.jsonl
+  eval_jsonl: data/processed_adapter_data_eval.jsonl
   num_workers: 4
 
 training:
   output_dir: outputs/qwen35a3b_router_only
   seed: 42
-  epochs: 1
+  epochs: 2
   train_batch_size: 2
   eval_batch_size: 4
   gradient_accumulation_steps: 64
-  learning_rate: 2.0e-4
+  learning_rate: 1.0e-5
   weight_decay: 0.0
   warmup_ratio: 0.03
   max_grad_norm: 1.0
-  log_every: 5
+  log_every: 1
   save_every_steps: 200
   eval_every_steps: 0
   max_steps: 1000

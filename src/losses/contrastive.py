@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Dict, Optional
 
 import torch
 import torch.distributed as dist
@@ -78,7 +78,8 @@ def symmetric_info_nce_loss(
     logit_scale: torch.Tensor,
     cross_device_negatives: bool = True,
     feature_queue: Optional[FeatureQueue] = None,
-) -> torch.Tensor:
+    return_stats: bool = False,
+):
     # Keep contrastive math in a unified compute dtype to avoid mixed-precision
     # matmul/cat runtime errors across bf16/fp16/fp32 branches.
     compute_dtype = torch.float32
@@ -100,6 +101,15 @@ def symmetric_info_nce_loss(
     logits_a = logit_scale * (anchor_embeddings @ all_positive.T)
     logits_p = logit_scale * (positive_embeddings @ all_anchor.T)
 
+    pos_sim_a = torch.gather(logits_a / logit_scale, 1, targets.unsqueeze(1)).squeeze(1)
+    pos_sim_p = torch.gather(logits_p / logit_scale, 1, targets.unsqueeze(1)).squeeze(1)
+    pos_sim_mean = 0.5 * (pos_sim_a.mean() + pos_sim_p.mean())
+
+    neg_sum_a = (logits_a / logit_scale).sum(dim=1) - pos_sim_a
+    neg_sum_p = (logits_p / logit_scale).sum(dim=1) - pos_sim_p
+    neg_count_a = (logits_a.shape[1] - 1)
+    neg_count_p = (logits_p.shape[1] - 1)
+
     if feature_queue is not None:
         queued = feature_queue.get()
         if queued is not None and queued.numel() > 0:
@@ -108,8 +118,18 @@ def symmetric_info_nce_loss(
                 queued.to(device=anchor_embeddings.device, dtype=compute_dtype),
                 dim=-1,
             )
-            logits_a = torch.cat([logits_a, logit_scale * (anchor_embeddings @ queued.T)], dim=1)
-            logits_p = torch.cat([logits_p, logit_scale * (positive_embeddings @ queued.T)], dim=1)
+            queued_logits_a = logit_scale * (anchor_embeddings @ queued.T)
+            queued_logits_p = logit_scale * (positive_embeddings @ queued.T)
+            logits_a = torch.cat([logits_a, queued_logits_a], dim=1)
+            logits_p = torch.cat([logits_p, queued_logits_p], dim=1)
+            neg_sum_a = neg_sum_a + (queued_logits_a / logit_scale).sum(dim=1)
+            neg_sum_p = neg_sum_p + (queued_logits_p / logit_scale).sum(dim=1)
+            neg_count_a += queued_logits_a.shape[1]
+            neg_count_p += queued_logits_p.shape[1]
+
+    neg_sim_a = neg_sum_a / max(1, neg_count_a)
+    neg_sim_p = neg_sum_p / max(1, neg_count_p)
+    neg_sim_mean = 0.5 * (neg_sim_a.mean() + neg_sim_p.mean())
 
     loss_a = F.cross_entropy(logits_a, targets)
     loss_p = F.cross_entropy(logits_p, targets)
@@ -119,5 +139,12 @@ def symmetric_info_nce_loss(
         with torch.no_grad():
             queue_features = torch.cat([all_anchor.detach(), all_positive.detach()], dim=0)
             feature_queue.enqueue(queue_features)
+
+    if return_stats:
+        stats: Dict[str, torch.Tensor] = {
+            "positive_similarity_mean": pos_sim_mean.detach(),
+            "negative_similarity_mean": neg_sim_mean.detach(),
+        }
+        return loss, stats
 
     return loss

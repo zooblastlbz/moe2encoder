@@ -147,10 +147,19 @@ class RouterContrastiveTrainer:
             raise RuntimeError(
                 "No router parameters matched. Update model.router_name_patterns in your config."
             )
+        trainable_param_count = sum(
+            p.numel() for p in train_module.parameters() if p.requires_grad
+        )
 
         if accelerator.is_main_process:
             save_json(output_dir / "freeze_report.json", freeze_report)
             save_json(output_dir / "resolved_config.json", as_dict(config))
+            accelerator.print(
+                "[Step2-ACC] Trainable parameters: "
+                f"{trainable_param_count:,} "
+                f"(router={freeze_report['trainable_params']:,}, "
+                f"logit_scale={trainable_param_count - int(freeze_report['trainable_params'])})"
+            )
 
         train_dataset = PromptPairDataset(train_path)
         collator = PromptPairCollator(
@@ -260,12 +269,13 @@ class RouterContrastiveTrainer:
                     scale = accelerator.unwrap_model(train_module).current_logit_scale(
                         config.contrastive.logit_scale_max
                     )
-                    loss = symmetric_info_nce_loss(
+                    loss, sim_stats = symmetric_info_nce_loss(
                         anchor_embeddings=out_a["sentence_embeddings"],
                         positive_embeddings=out_p["sentence_embeddings"],
                         logit_scale=scale,
                         cross_device_negatives=config.contrastive.cross_device_negatives,
                         feature_queue=queue,
+                        return_stats=True,
                     )
                     accelerator.backward(loss)
 
@@ -287,12 +297,20 @@ class RouterContrastiveTrainer:
                 if accelerator.sync_gradients:
                     global_step += 1
                     reduced_loss = accelerator.gather(loss.detach()).mean().item()
+                    reduced_pos_sim = (
+                        accelerator.gather(sim_stats["positive_similarity_mean"]).mean().item()
+                    )
+                    reduced_neg_sim = (
+                        accelerator.gather(sim_stats["negative_similarity_mean"]).mean().item()
+                    )
 
-                    if accelerator.is_main_process and global_step % config.training.log_every == 0:
+                    if accelerator.is_main_process:
                         log_row = {
                             "step": global_step,
                             "epoch": epoch,
                             "loss": float(reduced_loss),
+                            "positive_similarity_mean": float(reduced_pos_sim),
+                            "negative_similarity_mean": float(reduced_neg_sim),
                             "lr": scheduler.get_last_lr()[0],
                             "logit_scale": float(
                                 accelerator.unwrap_model(train_module)
@@ -305,6 +323,8 @@ class RouterContrastiveTrainer:
                             f.write(json.dumps(log_row, ensure_ascii=False) + "\n")
                         accelerator.print(
                             f"[Step2-ACC] step={global_step} loss={log_row['loss']:.4f} "
+                            f"pos_sim={log_row['positive_similarity_mean']:.4f} "
+                            f"neg_sim={log_row['negative_similarity_mean']:.4f} "
                             f"lr={log_row['lr']:.3e} logit_scale={log_row['logit_scale']:.3f}"
                         )
 
