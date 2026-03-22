@@ -30,6 +30,80 @@ def _to_logits(output) -> Optional[torch.Tensor]:
     return None
 
 
+def _expert_activation_metrics(dist: torch.Tensor) -> Dict[str, object]:
+    dist = dist.float()
+    num_experts = int(dist.numel())
+    if num_experts == 0:
+        return {
+            "num_experts": 0,
+            "expert_usage_entropy": 0.0,
+            "expert_usage_entropy_normalized": 0.0,
+            "effective_expert_count": 0.0,
+            "effective_expert_ratio": 0.0,
+            "active_expert_count_ge_1pct": 0,
+            "active_expert_ratio_ge_1pct": 0.0,
+            "active_expert_count_ge_0p1pct": 0,
+            "active_expert_ratio_ge_0p1pct": 0.0,
+            "top2_expert_share": 0.0,
+            "top4_expert_share": 0.0,
+            "gini_coefficient": 0.0,
+            "load_balance_cv": 0.0,
+        }
+
+    eps = 1e-12
+    entropy = -(dist * torch.log(dist.clamp_min(eps))).sum()
+    entropy_val = float(entropy.item())
+    if num_experts > 1:
+        entropy_norm = entropy_val / float(torch.log(torch.tensor(float(num_experts))).item())
+    else:
+        entropy_norm = 0.0
+
+    topk2 = min(2, num_experts)
+    topk4 = min(4, num_experts)
+    top2_share = float(torch.topk(dist, k=topk2).values.sum().item())
+    top4_share = float(torch.topk(dist, k=topk4).values.sum().item())
+
+    active_1pct = int((dist >= 0.01).sum().item())
+    active_0p1pct = int((dist >= 0.001).sum().item())
+
+    sorted_dist, _ = torch.sort(dist)
+    idx = torch.arange(
+        1,
+        num_experts + 1,
+        dtype=sorted_dist.dtype,
+        device=sorted_dist.device,
+    )
+    denom = sorted_dist.sum().clamp_min(eps)
+    gini = (2.0 * (idx * sorted_dist).sum() / (num_experts * denom)) - (
+        (num_experts + 1) / num_experts
+    )
+    gini = gini.clamp(min=0.0, max=1.0)
+
+    mean_load = dist.mean().clamp_min(eps)
+    load_balance_cv = float((dist.std(unbiased=False) / mean_load).item())
+
+    effective_experts = float(torch.exp(entropy).item())
+    return {
+        "num_experts": num_experts,
+        "expert_usage_entropy": entropy_val,
+        "expert_usage_entropy_normalized": float(entropy_norm),
+        "effective_expert_count": effective_experts,
+        "effective_expert_ratio": float(effective_experts / float(num_experts)),
+        "active_expert_count_ge_1pct": active_1pct,
+        "active_expert_ratio_ge_1pct": float(active_1pct / float(num_experts)),
+        "active_expert_count_ge_0p1pct": active_0p1pct,
+        "active_expert_ratio_ge_0p1pct": float(active_0p1pct / float(num_experts)),
+        "top2_expert_share": top2_share,
+        "top4_expert_share": top4_share,
+        "gini_coefficient": float(gini.item()),
+        "load_balance_cv": load_balance_cv,
+    }
+
+
+def _expert_frequency_mapping(dist: torch.Tensor) -> Dict[str, float]:
+    return {str(i): float(v.item()) for i, v in enumerate(dist)}
+
+
 @dataclass
 class ModuleStats:
     token_count: int = 0
@@ -101,11 +175,15 @@ class RouterStatsTracker:
                 continue
             dist = st.expert_counts.float() / float(st.expert_counts.sum().item())
             top_share = float(dist.max().item())
+            activation_metrics = _expert_activation_metrics(dist)
             result[module_name] = {
                 "token_count": st.token_count,
                 "mean_entropy": st.entropy_sum / float(st.token_count),
                 "top_expert_share": top_share,
                 "expert_distribution": dist.tolist(),
+                "expert_activation_frequency": dist.tolist(),
+                "expert_activation_frequency_by_expert": _expert_frequency_mapping(dist),
+                **activation_metrics,
             }
         return result
 
@@ -138,10 +216,14 @@ def aggregate_router_summaries(summaries: List[Dict[str, Dict[str, object]]]) ->
         if token_count == 0:
             continue
         dist_sum = data["expert_distribution_sum"] / float(token_count)
+        activation_metrics = _expert_activation_metrics(dist_sum)
         final[module_name] = {
             "token_count": token_count,
             "mean_entropy": data["entropy_weighted_sum"] / float(token_count),
             "top_expert_share": float(dist_sum.max().item()),
             "expert_distribution": dist_sum.tolist(),
+            "expert_activation_frequency": dist_sum.tolist(),
+            "expert_activation_frequency_by_expert": _expert_frequency_mapping(dist_sum),
+            **activation_metrics,
         }
     return final

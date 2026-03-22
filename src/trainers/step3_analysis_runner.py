@@ -43,6 +43,10 @@ class Step3AnalysisRunner:
                 "- "
                 f"`{name}`: entropy_delta={row['entropy_delta']:.6f}, "
                 f"top_share_delta={row['top_expert_share_delta']:.6f}, "
+                f"top2_delta={row.get('top2_expert_share_delta', 0.0):.6f}, "
+                f"eff_experts_delta={row.get('effective_expert_count_delta', 0.0):.6f}, "
+                f"active@1%_delta={row.get('active_expert_count_ge_1pct_delta', 0.0):.2f}, "
+                f"gini_delta={row.get('gini_coefficient_delta', 0.0):.6f}, "
                 f"jsd={row['expert_distribution_jsd']:.6f}"
             )
         return lines
