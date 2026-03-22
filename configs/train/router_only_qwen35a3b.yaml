@@ -36,6 +36,7 @@ contrastive:
   temperature_init: 0.07
   logit_scale_max: 100.0
   cross_device_negatives: true
+  cross_device_gather_with_grad: false
   feature_queue_size: 4096
 
 runtime:

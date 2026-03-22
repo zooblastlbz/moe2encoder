@@ -52,6 +52,7 @@ class ContrastiveConfig:
     temperature_init: float = 0.07
     logit_scale_max: float = 100.0
     cross_device_negatives: bool = True
+    cross_device_gather_with_grad: bool = False
     feature_queue_size: int = 0
 
 

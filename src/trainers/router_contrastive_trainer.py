@@ -274,6 +274,7 @@ class RouterContrastiveTrainer:
                         positive_embeddings=out_p["sentence_embeddings"],
                         logit_scale=scale,
                         cross_device_negatives=config.contrastive.cross_device_negatives,
+                        cross_device_gather_with_grad=config.contrastive.cross_device_gather_with_grad,
                         feature_queue=queue,
                         return_stats=True,
                     )
