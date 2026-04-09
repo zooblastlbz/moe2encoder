@@ -4,3 +4,5 @@ pyyaml>=6.0.0
 sentencepiece>=0.2.0
 accelerate>=0.33.0
 deepspeed>=0.14.0
+sentence-transformers>=3.0.0
+mteb>=2.2.0
